@@ -1,0 +1,173 @@
+#include <Wire.h>
+#include <RTClib.h>
+#include <LiquidCrystal_I2C.h>
+// RTC and LCD
+RTC_DS3231 rtc;
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+// Pin configuration
+#define BUZZER 8
+#define ACK_BUTTON 2
+#define EMERGENCY_BUTTON 3
+#define GREEN_LED 9
+#define RED_LED 10
+// Reminder messages
+const char* reminderMessages[] = {
+"TAKE MEDICINE",
+"DRINK WATER",
+"EAT SNACKS",
+"DRINK WATER",
+"TAKE MEDICINE"
+};
+const int reminderCount = 5;
+// Alarm schedule
+DateTime alarmTimes[5];
+bool alarmTriggered[5] = {false, false, false, false, false};
+// System status
+bool reminderActive = false;
+bool emergencyActive = false;
+String activeMessage = "";
+bool lastAck = HIGH;
+bool lastEmergency = HIGH;
+unsigned long lastDisplay = 0;
+// LCD display function
+void printLine(int row, String msg) {
+lcd.setCursor(0, row);
+lcd.print(" ");
+lcd.setCursor(0, row);
+lcd.print(msg.substring(0, 16));
+}
+// Start reminder alarm
+void startReminder(String message) {
+if (emergencyActive) return;
+reminderActive = true;
+activeMessage = message;
+lcd.clear();
+printLine(0, activeMessage);
+printLine(1, "PRESS ACK BUTTON");
+digitalWrite(BUZZER, HIGH);
+digitalWrite(GREEN_LED, HIGH);
+digitalWrite(RED_LED, LOW);
+Serial.println(activeMessage);
+}
+// Emergency alert
+void emergencyAlert() {
+emergencyActive = true;
+lcd.clear();
+printLine(0, "EMERGENCY!");
+printLine(1, "HELP REQUIRED");
+digitalWrite(BUZZER, HIGH);
+digitalWrite(RED_LED, HIGH);
+digitalWrite(GREEN_LED, LOW);
+Serial.println("EMERGENCY ACTIVATED!");
+}
+// Check five-minute reminders
+void checkReminders(DateTime now) {
+for (int i = 0; i < reminderCount; i++) {
+if (!alarmTriggered[i] &&
+now.unixtime() >= alarmTimes[i].unixtime()) {
+alarmTriggered[i] = true;
+if (!emergencyActive) {
+startReminder(reminderMessages[i]);
+}
+}
+}
+}
+// Normal LCD display
+void updateDisplay(DateTime now) {
+if (emergencyActive || reminderActive) {
+return;
+}
+digitalWrite(BUZZER, LOW);
+digitalWrite(RED_LED, LOW);
+digitalWrite(GREEN_LED, LOW);
+printLine(0, "SENIOR CARE");
+char timeText[17];
+snprintf(timeText, sizeof(timeText),
+"TIME %02d:%02d:%02d",
+now.hour(), now.minute(), now.second());
+printLine(1, String(timeText));
+}
+// Setup
+void setup() {
+Serial.begin(9600);
+Wire.begin();
+pinMode(BUZZER, OUTPUT);
+pinMode(ACK_BUTTON, INPUT_PULLUP);
+pinMode(EMERGENCY_BUTTON, INPUT_PULLUP);
+pinMode(GREEN_LED, OUTPUT);
+pinMode(RED_LED, OUTPUT);
+digitalWrite(BUZZER, LOW);
+digitalWrite(GREEN_LED, LOW);
+digitalWrite(RED_LED, LOW);
+lcd.init();
+lcd.backlight();
+lcd.clear();
+printLine(0, "SENIOR CARE");
+printLine(1, "SYSTEM STARTING");
+// Initialize RTC
+if (!rtc.begin()) {
+lcd.clear();
+printLine(0, "RTC NOT FOUND");
+printLine(1, "CHECK CONNECTION");
+while (true) {
+delay(1000);
+}
+}
+// SET RTC TIME ONCE ONLY
+// Uncomment, upload once, then comment again.
+// rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+// Read current RTC time
+DateTime now = rtc.now();
+// Set five reminders at 1-minute intervals
+for (int i = 0; i < reminderCount; i++) {
+alarmTimes[i] = now + TimeSpan(0, 0, i + 1, 0);
+}
+lcd.clear();
+printLine(0, "SYSTEM READY");
+printLine(1, "5 MIN TEST MODE");
+Serial.println("Senior Care System Ready");
+delay(2000);
+}
+// Main loop
+void loop() {
+DateTime now = rtc.now();
+// Check reminder schedule
+checkReminders(now);
+// ACK button
+bool ackState = digitalRead(ACK_BUTTON);
+if (lastAck == HIGH && ackState == LOW) {
+if (emergencyActive) {
+emergencyActive = false;
+reminderActive = false;
+lcd.clear();
+printLine(0, "EMERGENCY");
+printLine(1, "RESET DONE");
+}
+else if (reminderActive) {
+reminderActive = false;
+lcd.clear();
+printLine(0, "REMINDER");
+printLine(1, "ACKNOWLEDGED");
+}
+digitalWrite(BUZZER, LOW);
+digitalWrite(RED_LED, LOW);
+digitalWrite(GREEN_LED, LOW);
+delay(250);
+}
+lastAck = ackState;
+// Emergency button
+bool emergencyState =
+digitalRead(EMERGENCY_BUTTON);
+if (lastEmergency == HIGH &&
+emergencyState == LOW) {
+emergencyAlert();
+}
+lastEmergency = emergencyState;
+// Update LCD every second
+if (millis() - lastDisplay >= 1000) {
+lastDisplay = millis();
+now = rtc.now();
+updateDisplay(now);
+}
+delay(20);
+ {
